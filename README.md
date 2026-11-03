@@ -88,6 +88,17 @@ We currently maintain, the following operating systems and cpu architectures:
 
 *Historically Windows on arm, has not received the best support. If this changes we may add it.*
 
+Each release also ships native packages, plus a `SHA256SUMS` file to verify downloads:
+
+| Platform | Package | Install |
+| --- | --- | --- |
+| Debian / Ubuntu (amd64, arm64) | `kubent_<version>_<arch>.deb` | `sudo apt install ./kubent_<version>_<arch>.deb` |
+| macOS 13+ (arm64, amd64) | `kubent-<version>-macos-<arch>.pkg` | `sudo installer -pkg kubent-<version>-macos-<arch>.pkg -target /` |
+| Windows (amd64) | `kubent-<version>-windows-amd64.zip` | Unzip and put `kubent.exe` on your `PATH` |
+
+The packages aren't signed with a publisher certificate, so macOS Gatekeeper and Windows SmartScreen may warn on
+first run. On macOS, a downloaded `.pkg` can be opened with right-click → Open.
+
 ### Third-Party Installation
 
 Please note that third-party installation methods are maintained by the community.
