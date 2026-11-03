@@ -2,12 +2,13 @@
 
 __*Easily check your clusters for use of deprecated APIs*__
 
-Kubernetes 1.16 is slowly starting to roll out, not only across various managed
-Kubernetes offerings, and with that come a lot of API deprecations[1][1].
+Kubernetes regularly deprecates and removes API versions[1][1], and an upgrade
+can break workloads that still use them.
 
 *Kube No Trouble (__`kubent`__)* is a simple tool to check whether you're using
 any of these API versions in your cluster and therefore should upgrade your
-workloads first, before upgrading your Kubernetes cluster.
+workloads first, before upgrading your Kubernetes cluster. It covers
+Kubernetes releases up to __1.37__.
 
 This tool will be able to detect deprecated APIs depending on how you deploy
 your resources, as we need the original manifest to be stored somewhere. In
@@ -16,12 +17,48 @@ particular following tools are supported:
 - **kubectl** - uses the `kubectl.kubernetes.io/last-applied-configuration` annotation
 - **Helm v3** - uses Helm manifests stored as Secrets or ConfigMaps directly in individual namespaces
 
-[1]: https://kubernetes.io/blog/2019/07/18/api-deprecations-in-1-16/
+[1]: https://kubernetes.io/docs/reference/using-api/deprecation-guide/
 
 **Additional resources:**
 - Blog post on K8s deprecated APIs and introduction of kubent: [Kubernetes: Deprecated APIs aka Introducing Kube-No-Trouble][2]
 
 [2]: https://stepan.wtf/kubernetes-deprecated-apis-introducing-kubent/
+
+## Supported Kubernetes versions
+
+`kubent` ships with the following rulesets, embedded in the binary:
+
+| Ruleset | Checks for |
+| --- | --- |
+| `deprecated-1-16` | APIs removed in 1.16 (e.g. `extensions/v1beta1` Deployments, DaemonSets) |
+| `deprecated-1-22` | APIs removed in 1.22 (e.g. `extensions/v1beta1` Ingress, `rbac.authorization.k8s.io/v1beta1`) |
+| `deprecated-1-25` | APIs removed in 1.25 (e.g. `batch/v1beta1` CronJob, PodSecurityPolicy) |
+| `deprecated-1-26` | APIs removed in 1.26 (e.g. `autoscaling/v2beta2` HorizontalPodAutoscaler) |
+| `deprecated-1-27` | APIs removed in 1.27 (`storage.k8s.io/v1beta1` CSIStorageCapacity) |
+| `deprecated-1-29` | APIs removed in 1.29 (`flowcontrol.apiserver.k8s.io/v1beta2`) |
+| `deprecated-1-32` | APIs removed in 1.32 (`flowcontrol.apiserver.k8s.io/v1beta3`) |
+| `deprecated-future` | Deprecated beta APIs that are still served but will be removed in a future release |
+
+Kubernetes 1.33 through 1.37 only removed alpha API versions, which `kubent`
+doesn't track, so there is no removal ruleset for those releases. Beta APIs
+deprecated in those releases are covered by `deprecated-future`:
+
+| Since | Kinds | Deprecated version(s) → replacement |
+| --- | --- | --- |
+| 1.21 | VolumeSnapshot, VolumeSnapshotClass, VolumeSnapshotContent | `snapshot.storage.k8s.io/v1beta1` → `v1` |
+| 1.28 | SelfSubjectReview | `authentication.k8s.io/v1beta1` → `v1` |
+| 1.30 | ValidatingAdmissionPolicy, ValidatingAdmissionPolicyBinding | `admissionregistration.k8s.io/v1beta1` → `v1` |
+| 1.33 | IPAddress, ServiceCIDR | `networking.k8s.io/v1beta1` → `v1` |
+| 1.34 | VolumeAttributesClass | `storage.k8s.io/v1beta1` → `v1` |
+| 1.34 | DeviceClass, ResourceClaim, ResourceClaimTemplate, ResourceSlice | `resource.k8s.io/v1beta1`, `v1beta2` → `v1` |
+| 1.36 | MutatingAdmissionPolicy, MutatingAdmissionPolicyBinding | `admissionregistration.k8s.io/v1beta1` → `v1` |
+| 1.37 | ClusterTrustBundle, PodCertificateRequest | `certificates.k8s.io/v1beta1` → `v1` |
+| 1.37 | StorageVersionMigration | `storagemigration.k8s.io/v1beta1` → `v1` |
+
+*Since* is the release in which the replacement API became available. A
+finding is only reported when the target version (see `--target-version`) is
+at or above it, so that `kubent` never suggests an API your cluster can't serve
+yet.
 
 ## Install
 
@@ -85,28 +122,47 @@ location using the `-k` switch).
 *Please note that you need to have sufficient permissions to read Secrets in the
 cluster in order to use `Helm*` collectors.*
 
+For example, checking a few of the test manifests from [fixtures/](fixtures/)
+against Kubernetes 1.37:
+
 ```sh
-$./kubent
-6:25PM INF >>> Kube No Trouble `kubent` <<<
-6:25PM INF Initializing collectors and retrieving data
-6:25PM INF Retrieved 103 resources from collector name=Cluster
-6:25PM INF Retrieved 0 resources from collector name="Helm v3"
-6:25PM INF Loaded ruleset name=deprecated-1-16.rego
-6:25PM INF Loaded ruleset name=deprecated-1-20.rego
+$ kubent -c=false --helm3=false -t 1.37 \
+    -f fixtures/ingress-v1beta1.yaml -f fixtures/flowschema-v1beta3.yaml \
+    -f fixtures/validatingadmissionpolicy-v1beta1.yaml -f fixtures/resourceclaim-v1beta1.yaml
+3:20PM INF >>> Kube No Trouble `kubent` <<<
+3:20PM INF version 0.8.0-dev (git sha 3bff8d1)
+3:20PM INF Initializing collectors and retrieving data
+3:20PM INF Target K8s version is 1.37.0
+3:20PM INF Retrieved 4 resources from collector name=File
+3:20PM INF Loaded ruleset name=custom.rego.tmpl
+3:20PM INF Loaded ruleset name=deprecated-1-16.rego
+3:20PM INF Loaded ruleset name=deprecated-1-22.rego
+3:20PM INF Loaded ruleset name=deprecated-1-25.rego
+3:20PM INF Loaded ruleset name=deprecated-1-26.rego
+3:20PM INF Loaded ruleset name=deprecated-1-27.rego
+3:20PM INF Loaded ruleset name=deprecated-1-29.rego
+3:20PM INF Loaded ruleset name=deprecated-1-32.rego
+3:20PM INF Loaded ruleset name=deprecated-future.rego
 __________________________________________________________________________________________
->>> 1.16 Deprecated APIs <<<
+>>> Deprecated APIs removed in 1.22 <<<
 ------------------------------------------------------------------------------------------
-KIND         NAMESPACE     NAME                    API_VERSION
-Deployment   default       nginx-deployment-old    apps/v1beta1
-Deployment   kube-system   event-exporter-v0.2.5   apps/v1beta1
-Deployment   kube-system   k8s-snapshots           extensions/v1beta1
-Deployment   kube-system   kube-dns                extensions/v1beta1
+KIND      NAMESPACE     NAME           API_VERSION          REPLACE_WITH            (SINCE)
+Ingress   <undefined>   test-ingress   extensions/v1beta1   networking.k8s.io/v1    (1.19.0)
 __________________________________________________________________________________________
->>> 1.20 Deprecated APIs <<<
+>>> Deprecated APIs removed in 1.32 <<<
 ------------------------------------------------------------------------------------------
-KIND      NAMESPACE   NAME           API_VERSION
-Ingress   default     test-ingress   extensions/v1beta1
+KIND         NAMESPACE     NAME                    API_VERSION                            REPLACE_WITH                       (SINCE)
+FlowSchema   <undefined>   service-accounts-test   flowcontrol.apiserver.k8s.io/v1beta3   flowcontrol.apiserver.k8s.io/v1    (1.29.0)
+__________________________________________________________________________________________
+>>> Deprecated APIs to be removed in future <<<
+------------------------------------------------------------------------------------------
+KIND                        NAMESPACE     NAME                      API_VERSION                            REPLACE_WITH                       (SINCE)
+ResourceClaim               default       single-gpu                resource.k8s.io/v1beta1                resource.k8s.io/v1                 (1.34.0)
+ValidatingAdmissionPolicy   <undefined>   demo-policy.example.com   admissionregistration.k8s.io/v1beta1   admissionregistration.k8s.io/v1    (1.30.0)
 ```
+
+If no tables are printed after the `Loaded ruleset` lines, no deprecated APIs
+were found.
 
 ### Arguments
 
@@ -122,9 +178,10 @@ Usage of ./kubent:
   -f, --filename strings                manifests to check, use - for stdin
       --helm3                           enable Helm v3 collector (default true)
   -k, --kubeconfig string               path to the kubeconfig file
+      --labels                          print resource labels
   -l, --log-level string                set log level (trace, debug, info, warn, error, fatal, panic, disabled) (default "info")
-  -o, --output string                   output format - [text|json|csv] (default "text")
-  -O, --output-file string        output file, use - for stdout (default "-")
+  -o, --output OutputFormat             output format - [text|json|csv] (default text)
+  -O, --output-file string              output file, use - for stdout (default "-")
   -t, --target-version string           target K8s version in SemVer format (autodetected by default)
   -v, --version                         prints the version of kubent and exits
 ```
@@ -147,6 +204,8 @@ Usage of ./kubent:
   `kubent` will try to detect K8S cluster version and display only relevant findings. This flag allows to override this
   version for scenarios like use in CI with the file collector only, when detection from an actual cluster is not possible.
   Expected format is `major.minor[.patch]`, e.g. `1.16` or `1.16.3`.
+  It's also how you check readiness for an upgrade: `kubent -t 1.37` against a 1.32 cluster reports everything that
+  would need to change before moving to 1.37.
 
 ### Docker Image
 
@@ -221,7 +280,7 @@ FILES=($(ls *.yaml)); kubent ${FILES[@]/#/-f} --helm3=false -c=false
 
 ## Development
 
-The simplest way to build `kubent` is:
+Building `kubent` requires Go 1.26 or newer. The simplest way to build it is:
 
 ```sh
 # Clone the repository
@@ -236,12 +295,18 @@ Otherwise there's `Makefile`
 $ make
 make
 all                            Clean, build and pack
-help                           Prints list of tasks
 build                          Build binary
-generate                       Go generate
-release-artifacts              Create release artifacts
+changelog                      Generate Changelog based on PRs
 clean                          Clean build artifacts
+help                           Prints list of tasks
+release-artifacts              Create release artifacts
+test                           Run Go tests
+test-fmt                       Run go and opt fmt checks
 ```
+
+Rules live in [pkg/rules/rego/](pkg/rules/rego/), with a test manifest for each
+deprecated API in [fixtures/](fixtures/) and the matching test cases in
+[test/](test/). Run them with `go test ./...`.
 
 ## Issues and Contributions
 
