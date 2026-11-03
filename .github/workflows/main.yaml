@@ -62,10 +62,42 @@ jobs:
         shell: sh
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Package (.deb / .zip)
+        if: matrix.os != 'darwin'
+        run: |
+          GIT_REF=$(echo "${GITHUB_REF}" | sed "s,refs/[^/]*/,," | tr -cd '[:alnum:]._-')
+          scripts/package.sh ${{ matrix.os }} ${{ matrix.arch }} \
+            bin/kubent-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.os == 'windows' && '.exe' || '' }} "${GIT_REF}"
+        shell: sh
       - name: Archive release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: release-artifacts-${{ matrix.os }}-${{ matrix.arch }}
+          path: release-artifacts
+  build-macos-pkg:
+    name: build macOS pkg
+    needs:
+      [build]
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        arch: [arm64, amd64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.2.2
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-artifacts-darwin-${{ matrix.arch }}
+          path: darwin
+      - name: Package (.pkg)
+        run: |
+          GIT_REF=$(echo "${GITHUB_REF}" | sed "s,refs/[^/]*/,," | tr -cd '[:alnum:]._-')
+          tar -xzf darwin/kubent-*-darwin-${{ matrix.arch }}.tar.gz -C darwin
+          scripts/package.sh darwin ${{ matrix.arch }} darwin/kubent "${GIT_REF}" release-artifacts
+      - name: Archive release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-artifacts-macos-pkg-${{ matrix.arch }}
           path: release-artifacts
   build-docker:
     name: Build Docker Image
@@ -97,19 +129,27 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        k8s_version: [
-          "kindest/node:v1.19.16",
-          "kindest/node:v1.20.15",
-          "kindest/node:v1.21.14",
-          "kindest/node:v1.22.17",
-          "kindest/node:v1.23.17",
-          "kindest/node:v1.24.17",
-          "kindest/node:v1.25.16",
-          "kindest/node:v1.26.14",
-          "kindest/node:v1.27.11",
-          "kindest/node:v1.28.7",
-          "kindest/node:v1.29.2"
-        ]
+        # each node image needs a kind release that supports it
+        include:
+          - { k8s_version: "kindest/node:v1.19.16", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.20.15", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.21.14", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.22.17", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.23.17", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.24.17", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.25.16", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.26.14", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.27.11", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.28.7", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.29.2", kind_version: "v0.26.0" }
+          - { k8s_version: "kindest/node:v1.30.13", kind_version: "v0.29.0" }
+          - { k8s_version: "kindest/node:v1.31.14", kind_version: "v0.31.0" }
+          - { k8s_version: "kindest/node:v1.32.11", kind_version: "v0.31.0" }
+          - { k8s_version: "kindest/node:v1.33.12", kind_version: "v0.32.0" }
+          - { k8s_version: "kindest/node:v1.34.11", kind_version: "v0.33.0" }
+          - { k8s_version: "kindest/node:v1.35.8", kind_version: "v0.33.0" }
+          - { k8s_version: "kindest/node:v1.36.4", kind_version: "v0.33.0" }
+          - { k8s_version: "kindest/node:v1.37.0", kind_version: "v0.33.0" }
     steps:
     - name: Checkout
       uses: actions/checkout@v4.2.2
@@ -120,8 +160,9 @@ jobs:
         name: release-artifacts-linux-amd64
         path: release-artifacts
     - name: Create k8s Kind Cluster
-      uses: helm/kind-action@v1.12.0
+      uses: helm/kind-action@v1.15.1
       with:
+        version: ${{ matrix.kind_version }}
         node_image: ${{ matrix.k8s_version }}
         cluster_name: kubent-test-cluster
     - name: run integration test
@@ -133,8 +174,10 @@ jobs:
   create-release:
     name: Create Release
     needs:
-      [integration-test]
+      [integration-test, build-macos-pkg]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     outputs:
       upload_url: ${{ steps.create_release.outputs.upload_url }}
@@ -211,25 +254,29 @@ jobs:
     needs:
       [create-release]
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        os: [linux, darwin, windows]
-        arch: [arm64, amd64]
-        exclude:
-          - os: windows
-            arch: arm64
+    permissions:
+      contents: write
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     steps:
       - uses: actions/download-artifact@v4
         with:
-          name: release-artifacts-${{ matrix.os }}-${{ matrix.arch }}
+          pattern: release-artifacts-*
           path: release-artifacts
-      - name: Upload Release Asset - ${{ matrix.os }}-${{ matrix.arch }}
-        uses: actions/upload-release-asset@v1
+          merge-multiple: true
+      - name: Generate checksums
+        working-directory: release-artifacts
+        run: sha256sum -- * > SHA256SUMS && cat SHA256SUMS
+      - name: Upload release assets (.tar.gz, .deb, .zip, .pkg, SHA256SUMS)
+        working-directory: release-artifacts
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ needs.create-release.outputs.upload_url }}
-          asset_path: ./release-artifacts/kubent-${{ needs.create-release.outputs.tag_name }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
-          asset_name: kubent-${{ needs.create-release.outputs.tag_name }}-${{ matrix.os }}-${{ matrix.arch }}.tar.gz
-          asset_content_type: application/tar+gzip
+          UPLOAD_URL: ${{ needs.create-release.outputs.upload_url }}
+        run: |
+          for f in *; do
+            echo "Uploading ${f}"
+            curl -sSf -X POST \
+              -H "Authorization: Bearer ${GITHUB_TOKEN}" \
+              -H "Content-Type: application/octet-stream" \
+              --data-binary @"${f}" \
+              "${UPLOAD_URL%\{*}?name=$(printf '%s' "${f}" | jq -sRr @uri)" > /dev/null
+          done
